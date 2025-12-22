@@ -7,6 +7,7 @@ from app.models.shop import Shop
 from app.models.product import Product, State, Store, StoreProduct, StateProduct
 from app.models.article_code import ArticleCode, Promoter
 from app.models.price_consolidated import PriceConsolidated
+from app.models.pos_entry import GeneralNote, Item, Barcode, BarcodeProduct
 
 # from app.models.purchase import (
 #     PurchaseOrder,
@@ -34,6 +35,10 @@ __all__ = [
     "ArticleCode",
     "Promoter",
     "PriceConsolidated",
+    "GeneralNote",
+    "Item",
+    "Barcode",
+    "BarcodeProduct",
     # "PurchaseOrder",
     # "POItem",
     # "POItemBox",
