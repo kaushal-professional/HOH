@@ -1,0 +1,37 @@
+# Core Framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# Database
+sqlalchemy>=2.0.0
+alembic>=1.12.0
+psycopg2-binary>=2.9.0
+
+# Data Validation & Settings
+pydantic[email]>=2.0.0
+pydantic-settings>=2.0.0
+
+# Authentication & Security
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+bcrypt>=4.0.0
+
+# Utilities
+python-dotenv>=0.9.9
+python-dateutil>=2.8.0
+python-slugify>=8.0.0
+python-multipart>=0.0.6
+
+# HTTP Client
+httpx>=0.24.0
+
+# Third-party Integrations
+twilio>=9.0.0
+anthropic>=0.39.0
+
+# Data Processing
+pandas>=2.3.3
+openpyxl>=3.0.0
+
+# PDF Processing
+pdfplumber>=0.11.0
