@@ -6,6 +6,9 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import logging
+import asyncio
+import httpx
+from contextlib import asynccontextmanager
 
 from app.core.config import settings
 from app.core.database import engine, Base
@@ -21,11 +24,46 @@ logger = logging.getLogger(__name__)
 # Suppress uvicorn warnings for invalid HTTP requests
 logging.getLogger("uvicorn.error").setLevel(logging.ERROR)
 
-# Create FastAPI app
+# Background task to keep Render service alive
+async def send_health_check():
+    """Send health check to Render service every 5 minutes"""
+    health_url = "https://hoh-jfr9.onrender.com/health"
+
+    while True:
+        try:
+            await asyncio.sleep(300)  # Wait 5 minutes (300 seconds)
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(health_url)
+                if response.status_code == 200:
+                    logger.info(f"✅ Health check successful: {health_url}")
+                else:
+                    logger.warning(f"⚠️  Health check returned {response.status_code}: {health_url}")
+        except Exception as e:
+            logger.error(f"❌ Health check failed: {str(e)}")
+
+# Lifespan context manager for startup/shutdown events
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Start the background health check task
+    task = asyncio.create_task(send_health_check())
+    logger.info("🚀 Background health check task started")
+
+    yield
+
+    # Shutdown: Cancel the background task
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        logger.info("🛑 Background health check task stopped")
+
+# Create FastAPI app with lifespan
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
     debug=settings.debug,
+    lifespan=lifespan,
 )
 
 # Add middleware to handle invalid requests
@@ -41,13 +79,6 @@ async def block_invalid_requests(request: Request, call_next):
             status_code=status.HTTP_400_BAD_REQUEST,
             content={"detail": "Invalid request"}
         )
-
-# Create FastAPI app
-app = FastAPI(
-    title=settings.app_name,
-    version=settings.app_version,
-    debug=settings.debug,
-)
 
 # Configure CORS
 app.add_middleware(
