@@ -89,9 +89,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Create database tables
-Base.metadata.create_all(bind=engine)
-logger.info("Database tables created successfully")
+# Create database tables (with error handling)
+try:
+    Base.metadata.create_all(bind=engine)
+    logger.info("Database tables created successfully")
+except Exception as e:
+    logger.error(f"Failed to create database tables: {str(e)}")
+    logger.warning("Application will start but database operations may fail")
+    logger.warning("Please check your database connection settings")
 
 # Include API router
 app.include_router(api_router, prefix="/api")
