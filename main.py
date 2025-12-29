@@ -5,6 +5,8 @@ Main FastAPI application entry point.
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
 import logging
 import asyncio
 import httpx
@@ -73,12 +75,23 @@ async def block_invalid_requests(request: Request, call_next):
         response = await call_next(request)
         return response
     except Exception as e:
-        # Silently drop invalid HTTP requests
-        logger.debug(f"Invalid request blocked: {str(e)}")
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"detail": "Invalid request"}
-        )
+        # Log the full error for debugging
+        logger.error(f"Request failed: {str(e)}", exc_info=True)
+
+        # Return detailed error in development, generic in production
+        if settings.debug:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={
+                    "detail": str(e),
+                    "error_type": type(e).__name__
+                }
+            )
+        else:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"detail": "Invalid request"}
+            )
 
 # Configure CORS
 app.add_middleware(
@@ -89,14 +102,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Create database tables (with error handling)
-try:
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database tables created successfully")
-except Exception as e:
-    logger.error(f"Failed to create database tables: {str(e)}")
-    logger.warning("Application will start but database operations may fail")
-    logger.warning("Please check your database connection settings")
+# Database tables are managed externally (not auto-created on startup)
+
+# Add exception handler for validation errors
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Handle Pydantic validation errors with detailed messages"""
+    errors = exc.errors()
+    error_messages = []
+
+    for error in errors:
+        field = " -> ".join(str(x) for x in error["loc"])
+        message = error["msg"]
+        error_type = error["type"]
+        error_messages.append(f"{field}: {message} (type: {error_type})")
+
+    logger.error(f"Validation error: {error_messages}")
+
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "detail": "Validation Error",
+            "errors": error_messages,
+            "raw_errors": errors if settings.debug else None
+        }
+    )
 
 # Include API router
 app.include_router(api_router, prefix="/api")
