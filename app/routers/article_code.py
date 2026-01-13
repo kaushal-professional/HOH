@@ -7,7 +7,7 @@ import time
 import pandas as pd
 from io import StringIO
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query, File, UploadFile, Form
+from fastapi import APIRouter, Depends, HTTPException, status, Query, File, UploadFile
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
@@ -17,7 +17,7 @@ from app.models.price_consolidated import PriceConsolidated
 from app.schemas.article_code import (
     ArticleCodeCreate, ArticleCodeUpdate, ArticleCodeResponse,
     PromoterCreate, PromoterUpdate, PromoterResponse,
-    BarcodeScanResponse, ArticleLookupRequest,
+    BarcodeScanRequest, BarcodeScanResponse, ArticleLookupRequest,
     BulkOperationResponse, CSVUploadResponse, CSVUpdateResponse
 )
 from app.services.excel_data_loader import excel_loader
@@ -32,8 +32,7 @@ router = APIRouter(prefix="/article-codes", tags=["Article Codes & Promoters"])
 
 @router.post("/barcode-scan", response_model=BarcodeScanResponse, status_code=status.HTTP_200_OK)
 def scan_barcode(
-    barcode: str = Form(..., description="Barcode text/number"),
-    store_name: str = Form(..., description="Store name where scan occurred"),
+    request: BarcodeScanRequest,
     db: Session = Depends(get_db)
 ):
     """
@@ -58,13 +57,14 @@ def scan_barcode(
     - Weight in kg (extracted from barcode)
     """
     # Validate barcode input
-    if not barcode or not barcode.strip():
+    if not request.barcode or not request.barcode.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Barcode cannot be empty"
         )
 
-    barcode_text = barcode.strip()
+    barcode_text = request.barcode.strip()
+    store_name = request.store_name
 
     # Step 1: Decode the barcode to extract article code and weight
     article_code, weight, store_type = BarcodeDecoder.decode(barcode_text)
