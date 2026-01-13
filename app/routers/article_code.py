@@ -5,13 +5,11 @@ Full CRUD operations for articles and promoters.
 
 import time
 import pandas as pd
-from io import StringIO, BytesIO
+from io import StringIO
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, File, UploadFile, Form
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
-from PIL import Image
-import zxingcpp
 
 from app.core.database import get_db
 from app.models.article_code import ArticleCode, Promoter
@@ -19,7 +17,7 @@ from app.models.price_consolidated import PriceConsolidated
 from app.schemas.article_code import (
     ArticleCodeCreate, ArticleCodeUpdate, ArticleCodeResponse,
     PromoterCreate, PromoterUpdate, PromoterResponse,
-    BarcodeScanRequest, BarcodeScanResponse, ArticleLookupRequest,
+    BarcodeScanResponse, ArticleLookupRequest,
     BulkOperationResponse, CSVUploadResponse, CSVUpdateResponse
 )
 from app.services.excel_data_loader import excel_loader
@@ -33,22 +31,21 @@ router = APIRouter(prefix="/article-codes", tags=["Article Codes & Promoters"])
 # ============================================================================
 
 @router.post("/barcode-scan", response_model=BarcodeScanResponse, status_code=status.HTTP_200_OK)
-async def scan_barcode(
-    file: UploadFile = File(..., description="Image file containing barcode"),
+def scan_barcode(
+    barcode: str = Form(..., description="Barcode text/number"),
     store_name: str = Form(..., description="Store name where scan occurred"),
     db: Session = Depends(get_db)
 ):
     """
-    Scan barcode from uploaded image and retrieve product information including price with GST and weight.
+    Decode barcode and retrieve product information including price with GST and weight.
 
     This endpoint:
-    1. Accepts an image file containing a barcode
-    2. Extracts the barcode text using zxing-cpp
-    3. Decodes the barcode to extract article code and weight
-    4. Retrieves product and price information from the database
+    1. Accepts a barcode text/number directly
+    2. Decodes the barcode to extract article code and weight
+    3. Retrieves product and price information from the database
 
-    - **file**: Image file (JPEG, PNG, etc.) containing the barcode
-    - **store_name**: The store name where the scan occurred (e.g., "Food Square", "Reliance Smart")
+    - **barcode**: The barcode text/number (e.g., "8801234567890", "]C12600022496...")
+    - **store_name**: The store name where scan occurred (e.g., "Food Square", "Reliance Smart")
 
     Returns:
     - Product name (from article_codes table)
@@ -60,48 +57,16 @@ async def scan_barcode(
     - Price with GST (calculated as price + (price * gst))
     - Weight in kg (extracted from barcode)
     """
-    # Step 1: Extract barcode text from image
-    try:
-        image_data = await file.read()
-
-        # Decode image using PIL
-        img = Image.open(BytesIO(image_data))
-
-        if img is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid image file. Could not decode image."
-            )
-
-        # Convert to RGB if necessary
-        if img.mode != 'RGB':
-            img = img.convert('RGB')
-
-        # Try to decode barcode with zxing-cpp
-        results = zxingcpp.read_barcodes(img)
-
-        if not results or len(results) == 0 or not results[0].text:
-            # Try with grayscale if RGB fails
-            img_gray = img.convert('L')
-            results = zxingcpp.read_barcodes(img_gray)
-
-        if not results or len(results) == 0 or not results[0].text:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No barcode detected. Please ensure the image contains a clear barcode."
-            )
-
-        barcode_text = results[0].text
-
-    except HTTPException:
-        raise
-    except Exception as e:
+    # Validate barcode input
+    if not barcode or not barcode.strip():
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing image: {str(e)}"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Barcode cannot be empty"
         )
 
-    # Step 2: Decode the barcode to extract article code and weight
+    barcode_text = barcode.strip()
+
+    # Step 1: Decode the barcode to extract article code and weight
     article_code, weight, store_type = BarcodeDecoder.decode(barcode_text)
 
     if not article_code:
@@ -110,7 +75,7 @@ async def scan_barcode(
             detail=f"Unable to decode barcode: {barcode_text}. Please check the barcode format."
         )
 
-    # Step 3: Determine promoter name
+    # Step 2: Determine promoter name
     # PRIORITY 1: Use actual store location from promoter table (most accurate)
     # PRIORITY 2: Fallback to barcode format mapping if store not found
 
@@ -145,7 +110,7 @@ async def scan_barcode(
                 detail=f"Unable to determine promoter. Store '{store_name}' not found in promoter table and barcode type '{store_type}' is unknown."
             )
 
-    # Step 4: Get article name from article_codes table using promoter and article_code
+    # Step 3: Get article name from article_codes table using promoter and article_code
     article_record = db.query(ArticleCode).filter(
         ArticleCode.article_codes == article_code,
         ArticleCode.promoter == promoter_name
@@ -183,7 +148,7 @@ async def scan_barcode(
 
     product_name = article_record.products
 
-    # Step 5: Get price and GST from price_consolidated table using product name and pricelist
+    # Step 4: Get price and GST from price_consolidated table using product name and pricelist
     # Map promoter names to pricelist names for accurate price lookup
     promoter_to_pricelist = {
         "Smart & Essentials Barcode": ["Smart Bazaar", "Essentials"],
@@ -230,11 +195,11 @@ async def scan_barcode(
             # Calculate price with GST: price + (price * gst_percentage)
             price_with_gst = round(price + (price * gst), 2)
 
-    # Step 6: Format weight code and barcode format for frontend display
+    # Step 5: Format weight code and barcode format for frontend display
     weight_code = f"{int(weight * 1000):05d}" if weight else "00000"  # Format as 5-digit string
     barcode_format = store_type.replace("_", " ").title()  # e.g., "star_bazar" -> "Star Bazar"
 
-    # Step 7: Return comprehensive product information
+    # Step 6: Return comprehensive product information
     return BarcodeScanResponse(
         product=product_name,
         article_code=article_code,
