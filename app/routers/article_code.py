@@ -5,13 +5,11 @@ Full CRUD operations for articles and promoters.
 
 import time
 import pandas as pd
-from io import StringIO
+from io import StringIO, BytesIO
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, File, UploadFile, Form
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
-import numpy as np
-import cv2
 from PIL import Image
 import zxingcpp
 
@@ -66,28 +64,26 @@ async def scan_barcode(
     try:
         image_data = await file.read()
 
-        # Decode image bytes to OpenCV BGR
-        np_buf = np.frombuffer(image_data, dtype=np.uint8)
-        bgr = cv2.imdecode(np_buf, cv2.IMREAD_COLOR)
+        # Decode image using PIL
+        img = Image.open(BytesIO(image_data))
 
-        if bgr is None:
+        if img is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid image file. Could not decode image."
             )
 
-        # Convert to RGB for PIL
-        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        img_for_zxing = Image.fromarray(rgb)
+        # Convert to RGB if necessary
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
 
         # Try to decode barcode with zxing-cpp
-        results = zxingcpp.read_barcodes(img_for_zxing)
+        results = zxingcpp.read_barcodes(img)
 
         if not results or len(results) == 0 or not results[0].text:
             # Try with grayscale if RGB fails
-            gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-            img_for_zxing = Image.fromarray(gray)
-            results = zxingcpp.read_barcodes(img_for_zxing)
+            img_gray = img.convert('L')
+            results = zxingcpp.read_barcodes(img_gray)
 
         if not results or len(results) == 0 or not results[0].text:
             raise HTTPException(
