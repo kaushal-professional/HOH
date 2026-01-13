@@ -36,11 +36,11 @@ def scan_barcode(
     db: Session = Depends(get_db)
 ):
     """
-    Decode barcode and retrieve product information including price with GST and weight.
+    Decode barcode text and retrieve product information including price with GST and weight.
 
     This endpoint:
-    1. Accepts a barcode text/number directly
-    2. Decodes the barcode to extract article code and weight
+    1. Accepts a barcode text/number directly (no image scanning)
+    2. Decodes the barcode to extract article code and weight using BarcodeDecoder service
     3. Retrieves product and price information from the database
 
     - **barcode**: The barcode text/number (e.g., "8801234567890", "]C12600022496...")
@@ -66,7 +66,7 @@ def scan_barcode(
     barcode_text = request.barcode.strip()
     store_name = request.store_name
 
-    # Step 1: Decode the barcode to extract article code and weight
+    # Step 1: Decode the barcode to extract article code and weight using BarcodeDecoder service
     article_code, weight, store_type = BarcodeDecoder.decode(barcode_text)
 
     if not article_code:
