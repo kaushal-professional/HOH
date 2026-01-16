@@ -24,12 +24,12 @@ class StockTakeRepository:
 
     @staticmethod
     def create(db: Session, stock_take: StockTakeCreate) -> StockTake:
-        """Create a new stock take with optional open stock entries, or reuse existing one for same store and date"""
+        """Create a new stock take with optional open stock entries, or reuse existing one for same store"""
         try:
-            # Check if stock_take already exists for this store and start_date
+            # Check if active stock_take already exists for this store
             existing_stock_take = db.query(StockTake).filter(
                 StockTake.store_name == stock_take.store_name,
-                StockTake.start_date == stock_take.start_date
+                StockTake.status == 'active'
             ).first()
 
             if existing_stock_take:
@@ -58,9 +58,21 @@ class StockTakeRepository:
                                 **entry.model_dump()
                             )
                             db.add(open_stock)
+                    
+                    db.flush()
+                    
+                    # Update start_date from earliest open_stock created_at
+                    earliest_open_stock = db.query(OpenStock).filter(
+                        OpenStock.stock_take_id == db_stock_take.stock_take_id
+                    ).order_by(OpenStock.created_at.asc()).first()
+                    
+                    if earliest_open_stock:
+                        db_stock_take.start_date = earliest_open_stock.created_at.date()
             else:
-                # Create new stock take
+                # Create new stock take with placeholder date (will be updated after open_stock is created)
+                from datetime import datetime
                 stock_take_data = stock_take.model_dump(exclude={'open_stock_entries'})
+                stock_take_data['start_date'] = datetime.now().date()  # Temporary value
                 db_stock_take = StockTake(**stock_take_data)
                 db.add(db_stock_take)
                 db.flush()  # Flush to get the stock_take_id
@@ -84,6 +96,16 @@ class StockTakeRepository:
                                 **entry.model_dump()
                             )
                             db.add(open_stock)
+                    
+                    db.flush()
+                    
+                    # Update start_date from earliest open_stock created_at
+                    earliest_open_stock = db.query(OpenStock).filter(
+                        OpenStock.stock_take_id == db_stock_take.stock_take_id
+                    ).order_by(OpenStock.created_at.asc()).first()
+                    
+                    if earliest_open_stock:
+                        db_stock_take.start_date = earliest_open_stock.created_at.date()
 
             db.commit()
             db.refresh(db_stock_take)
@@ -337,7 +359,7 @@ class CloseStockRepository:
 
     @staticmethod
     def create(db: Session, stock_take_id: UUID, close_stock: CloseStockCreate) -> CloseStock:
-        """Create a single close stock entry"""
+        """Create a single close stock entry and auto-update end_date from created_at"""
         # Verify stock take exists
         stock_take = StockTakeRepository.get_by_id(db, stock_take_id)
         if not stock_take:
@@ -352,11 +374,16 @@ class CloseStockRepository:
                 **close_stock.model_dump()
             )
             db.add(db_close_stock)
+            db.flush()
             
-            # Update end_date and status in stock_take_prod table
-            from datetime import date
-            stock_take.end_date = date.today()
-            stock_take.status = 'Closed'
+            # Update end_date from earliest close_stock created_at timestamp
+            earliest_close_stock = db.query(CloseStock).filter(
+                CloseStock.stock_take_id == stock_take_id
+            ).order_by(CloseStock.created_at.asc()).first()
+            
+            if earliest_close_stock:
+                stock_take.end_date = earliest_close_stock.created_at.date()
+                stock_take.status = 'completed'
             
             db.commit()
             db.refresh(db_close_stock)
@@ -370,7 +397,7 @@ class CloseStockRepository:
 
     @staticmethod
     def bulk_create(db: Session, stock_take_id: UUID, entries: List[CloseStockCreate]) -> List[CloseStock]:
-        """Create or update multiple close stock entries"""
+        """Create or update multiple close stock entries and auto-update end_date"""
         # Verify stock take exists
         stock_take = StockTakeRepository.get_by_id(db, stock_take_id)
         if not stock_take:
@@ -403,10 +430,16 @@ class CloseStockRepository:
                 db.add(db_close_stock)
                 created_entries.append(db_close_stock)
 
-        # Update end_date and status in stock_take_prod table
-        from datetime import date
-        stock_take.end_date = date.today()
-        stock_take.status = 'completed'
+        db.flush()
+        
+        # Update end_date from earliest close_stock created_at timestamp
+        earliest_close_stock = db.query(CloseStock).filter(
+            CloseStock.stock_take_id == stock_take_id
+        ).order_by(CloseStock.created_at.asc()).first()
+        
+        if earliest_close_stock:
+            stock_take.end_date = earliest_close_stock.created_at.date()
+            stock_take.status = 'completed'
 
         db.commit()
         for entry in created_entries:
