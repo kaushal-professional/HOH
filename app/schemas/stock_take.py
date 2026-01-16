@@ -126,18 +126,19 @@ class CloseStockByStore(BaseModel):
 class StockTakeBase(BaseModel):
     """Base schema for Stock Take"""
     store_name: str = Field(..., max_length=255, description="Store name")
-    start_date: date = Field(..., description="Stock take start date")
-    end_date: Optional[date] = Field(None, description="Stock take end date")
+    start_date: Optional[date] = Field(None, description="Stock take start date (auto-set from first open_stock created_at)")
+    end_date: Optional[date] = Field(None, description="Stock take end date (auto-set from first close_stock created_at)")
 
     @validator('end_date')
     def validate_end_date(cls, v, values):
-        if v and 'start_date' in values and v < values['start_date']:
+        if v and 'start_date' in values and values['start_date'] and v < values['start_date']:
             raise ValueError('End date must be greater than or equal to start date')
         return v
 
 
-class StockTakeCreate(StockTakeBase):
+class StockTakeCreate(BaseModel):
     """Schema for creating a new stock take"""
+    store_name: str = Field(..., max_length=255, description="Store name")
     open_stock_entries: Optional[List[OpenStockCreate]] = Field(None, description="Optional list of opening stock entries")
 
 
