@@ -75,11 +75,14 @@ def create_stock_take(
 ):
     """
     Create a new stock take with optional open stock entries.
+    
+    The start_date will be automatically set from the created_at timestamp of the first open_stock entry.
+    The end_date will be automatically set from the created_at timestamp of the first close_stock entry.
 
     - **store_name**: Name of the store
-    - **start_date**: Stock take start date
-    - **end_date**: Stock take end date (optional)
     - **open_stock_entries**: List of opening stock entries (optional)
+    
+    Note: start_date and end_date are auto-generated and should not be provided.
     """
     db_stock_take = StockTakeRepository.create(db, stock_take)
 
