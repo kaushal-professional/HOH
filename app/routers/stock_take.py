@@ -22,7 +22,7 @@ from app.services.stock_take_repository import (
 from app.schemas.stock_take import (
     StockTakeCreate, StockTakeUpdate, StockTakeResponse, StockTakeSummaryResponse, StockTakeListResponse,
     OpenStockCreate, OpenStockUpdate, OpenStockResponse, OpenStockBulkCreate,
-    CloseStockCreate, CloseStockUpdate, CloseStockResponse, CloseStockBulkCreate, CloseStockByStore,
+    CloseStockCreate, CloseStockUpdate, CloseStockResponse,
 )
 
 class StockTakeListSummaryResponse(BaseModel):
@@ -124,8 +124,7 @@ def list_stock_takes(
     for st in stock_takes:
         response = StockTakeSummaryResponse.model_validate(st)
         response.open_stock_count = len(st.open_stocks)
-        response.close_stock_count = len(st.close_stocks)
-        
+
         # Get barcode products for this store and date to fetch pos_weight
         barcode_weights = db.query(
             BarcodeProduct.product,
@@ -134,18 +133,14 @@ def list_stock_takes(
             BarcodeProduct.store_name == st.store_name,
             cast(BarcodeProduct.created_at, Date) == st.start_date
         ).group_by(BarcodeProduct.product).all()
-        
+
         # Create a dict for quick lookup
         weight_map = {item.product: float(item.total_weight) if item.total_weight else None for item in barcode_weights}
-        
+
         # Add pos_weight to open_stocks
         for open_stock in response.open_stocks:
             open_stock.pos_weight = weight_map.get(open_stock.product_name)
-        
-        # Add pos_weight to close_stocks
-        for close_stock in response.close_stocks:
-            close_stock.pos_weight = weight_map.get(close_stock.product_name)
-        
+
         items.append(response)
 
     return StockTakeListSummaryResponse(items=items, total=total, skip=skip, limit=limit)
@@ -170,7 +165,6 @@ def get_stock_take(
 
     response = StockTakeResponse.model_validate(db_stock_take)
     response.open_stock_count = len(db_stock_take.open_stocks)
-    response.close_stock_count = len(db_stock_take.close_stocks)
 
     return response
 
@@ -199,7 +193,6 @@ def update_stock_take(
 
     response = StockTakeResponse.model_validate(db_stock_take)
     response.open_stock_count = len(db_stock_take.open_stocks)
-    response.close_stock_count = len(db_stock_take.close_stocks)
 
     return response
 
@@ -229,7 +222,7 @@ def get_stock_take_summary(
     db: Session = Depends(get_db)
 ):
     """
-    Get complete stock take summary including all open and close stock entries.
+    Get complete stock take summary including all open stock entries.
 
     - **stock_take_id**: UUID of the stock take
     """
@@ -242,7 +235,6 @@ def get_stock_take_summary(
 
     response = StockTakeSummaryResponse.model_validate(db_stock_take)
     response.open_stock_count = len(db_stock_take.open_stocks)
-    response.close_stock_count = len(db_stock_take.close_stocks)
 
     return response
 
@@ -266,7 +258,6 @@ def complete_stock_take(
 
     response = StockTakeResponse.model_validate(db_stock_take)
     response.open_stock_count = len(db_stock_take.open_stocks)
-    response.close_stock_count = len(db_stock_take.close_stocks)
 
     return response
 
@@ -376,45 +367,46 @@ def delete_open_stock(
 
 
 # ============================================================================
-# CLOSE STOCK ENDPOINTS
+# CLOSE STOCK ENDPOINTS (Date-based, independent of stock_take)
 # ============================================================================
 
-@router.post("/{stock_take_id}/close-stock", response_model=List[CloseStockResponse], status_code=status.HTTP_201_CREATED)
-def create_close_stock_bulk(
-    stock_take_id: UUID,
-    bulk_data: CloseStockBulkCreate,
+@router.post("/close-stock", response_model=List[CloseStockResponse], status_code=status.HTTP_201_CREATED)
+def create_close_stock(
+    data: CloseStockCreate,
     db: Session = Depends(get_db)
 ):
     """
-    Bulk create or update close stock entries for a stock take.
-    If an entry already exists (same product + promoter), it will be updated.
+    Create or update close stock entries for a specific store and date.
+    If an entry already exists (same store + date + product + promoter), it will be updated.
 
-    - **stock_take_id**: UUID of the stock take
+    - **store_name**: Name of the store
+    - **close_date**: Date for the closing stock
     - **entries**: List of close stock entries to create/update
     """
-    db_entries = CloseStockRepository.bulk_create(db, stock_take_id, bulk_data.entries)
+    db_entries = CloseStockRepository.bulk_create(db, data.store_name, data.close_date, data.entries)
     return [CloseStockResponse.model_validate(entry) for entry in db_entries]
 
 
-@router.get("/{stock_take_id}/close-stock", response_model=List[CloseStockResponse])
-def get_close_stock_by_stock_take(
-    stock_take_id: UUID,
+@router.get("/close-stock", response_model=List[CloseStockResponse])
+def get_close_stock_by_store(
+    store_name: str = Query(..., description="Store name"),
+    close_date: Optional[date] = Query(None, description="Specific date to filter (if not provided, returns all dates)"),
+    date_from: Optional[date] = Query(None, description="Filter by date from"),
+    date_to: Optional[date] = Query(None, description="Filter by date to"),
     db: Session = Depends(get_db)
 ):
     """
-    Get all close stock entries for a specific stock take.
+    Get close stock entries for a store with optional date filters.
 
-    - **stock_take_id**: UUID of the stock take
+    - **store_name**: Name of the store (required)
+    - **close_date**: Specific date to filter (optional)
+    - **date_from**: Filter by date from (optional)
+    - **date_to**: Filter by date to (optional)
     """
-    # Verify stock take exists
-    stock_take = StockTakeRepository.get_by_id(db, stock_take_id)
-    if not stock_take:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Stock take with ID {stock_take_id} not found"
-        )
-
-    entries = CloseStockRepository.get_by_stock_take(db, stock_take_id)
+    if close_date:
+        entries = CloseStockRepository.get_by_store_and_date(db, store_name, close_date)
+    else:
+        entries = CloseStockRepository.get_by_store(db, store_name, date_from, date_to)
     return [CloseStockResponse.model_validate(entry) for entry in entries]
 
 
@@ -477,86 +469,3 @@ def delete_close_stock(
             detail=f"Close stock entry with ID {id} not found"
         )
     return None
-
-
-@router.post("/close-stock-by-store", response_model=List[CloseStockResponse], status_code=status.HTTP_201_CREATED)
-def create_close_stock_by_store(
-    data: CloseStockByStore,
-    db: Session = Depends(get_db)
-):
-    """
-    Add close stock entries by store name - automatically finds the active stock take and validates products.
-
-    - **store_name**: Name of the store (must match exactly)
-    - **entries**: List of close stock entries to create/update
-
-    This endpoint will:
-    1. Find the active stock take for the given store name (using UUID internally)
-    2. Validate that products being closed exist in the opening stock
-    3. Add the close stock entries to that stock take
-    4. Return the created/updated close stock entries
-    """
-    from app.models.stock_take import OpenStock
-
-    # Step 1: Find active stock take for this store using store_name
-    active_stock_take = db.query(StockTake).filter(
-        StockTake.store_name == data.store_name,
-        StockTake.status == 'active'
-    ).first()
-
-    if not active_stock_take:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No active stock take found for store: {data.store_name}"
-        )
-
-    # Step 2: Get all open stock entries for this stock take (linked via UUID)
-    open_stock_entries = db.query(OpenStock).filter(
-        OpenStock.stock_take_id == active_stock_take.stock_take_id
-    ).all()
-
-    # Create a set of (product_name, promoter_name) tuples from open stock for validation
-    open_products = {
-        (entry.product_name, entry.promoter_name)
-        for entry in open_stock_entries
-    }
-
-    # Step 3: Validate that all close stock products exist in open stock
-    invalid_entries = []
-    for entry in data.entries:
-        product_key = (entry.product_name, entry.promoter_name)
-        if product_key not in open_products:
-            invalid_entries.append({
-                "product_name": entry.product_name,
-                "promoter_name": entry.promoter_name,
-                "error": "Product not found in opening stock"
-            })
-
-    # If there are invalid entries, return a detailed error
-    if invalid_entries:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "message": "Some products were not found in the opening stock",
-                "invalid_entries": invalid_entries,
-                "available_products": [
-                    {
-                        "product_name": entry.product_name,
-                        "promoter_name": entry.promoter_name
-                    }
-                    for entry in open_stock_entries
-                ]
-            }
-        )
-
-    # Step 4: Add close stock entries to the stock take (linked via UUID)
-    db_entries = CloseStockRepository.bulk_create(db, active_stock_take.stock_take_id, data.entries)
-
-    # Step 5: Update end_date in stock_take table when close stock is recorded
-    if not active_stock_take.end_date:
-        from datetime import date
-        active_stock_take.end_date = date.today()
-        db.commit()
-        db.refresh(active_stock_take)
-
-    return [CloseStockResponse.model_validate(entry) for entry in db_entries]
