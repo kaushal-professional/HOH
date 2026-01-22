@@ -1,409 +1,151 @@
 """
-API Router for Stock Take, Open Stock, and Close Stock endpoints.
-Full CRUD operations for the stock take management system.
-All operations are date-based.
+Pydantic schemas for Stock Take, Open Stock, and Close Stock.
+Request and response models for API endpoints.
 """
 
-from typing import List, Optional
-from datetime import date
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
-
-from app.core.database import get_db
-from app.core.auth import decode_access_token
-from app.services.stock_take_repository import (
-    StockTakeRepository,
-    OpenStockRepository,
-    CloseStockRepository,
-)
-from app.schemas.stock_take import (
-    StockTakeCreate, StockTakeUpdate, StockTakeResponse, StockTakeListResponse,
-    OpenStockCreate, OpenStockUpdate, OpenStockResponse,
-    CloseStockCreate, CloseStockUpdate, CloseStockResponse,
-)
-
-router = APIRouter(prefix="/stock-takes", tags=["Stock Take Management"])
-security = HTTPBearer()
+from datetime import date, datetime
+from typing import Optional, List
+from pydantic import BaseModel, Field, validator
+from uuid import UUID
 
 
 # ============================================================================
-# Authentication Helper
+# Open Stock Schemas (Date-based, independent of stock_take)
 # ============================================================================
 
-def get_current_user_email(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
-    """Extract and validate user email from JWT token"""
-    try:
-        token = credentials.credentials
-        payload = decode_access_token(token)
-        email = payload.get("email") or payload.get("sub")
+class OpenStockEntryBase(BaseModel):
+    """Base schema for a single Open Stock entry"""
+    product_name: str = Field(..., max_length=255, description="Product name")
+    promoter_name: str = Field(..., max_length=255, description="Promoter name")
+    open_qty: float = Field(..., ge=0, description="Opening quantity")
 
-        if not email:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token: email not found"
-            )
-
-        return email
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Could not validate credentials: {str(e)}"
-        )
+    @validator('open_qty')
+    def validate_quantity(cls, v):
+        if v < 0:
+            raise ValueError('Quantity must be non-negative')
+        return v
 
 
-# ============================================================================
-# STOCK TAKE ENDPOINTS (Simplified - store + date based)
-# ============================================================================
-
-@router.post("/", response_model=StockTakeResponse, status_code=status.HTTP_201_CREATED)
-def create_stock_take(
-    stock_take: StockTakeCreate,
-    db: Session = Depends(get_db)
-):
-    """
-    Create a new stock take for a store and date.
-    If one already exists for the same store and date, returns the existing one.
-
-    - **store_name**: Name of the store
-    - **stock_date**: Stock take date
-    """
-    db_stock_take = StockTakeRepository.create(db, stock_take)
-    return StockTakeResponse.model_validate(db_stock_take)
+class OpenStockCreate(BaseModel):
+    """Schema for creating open stock entries (date-based)"""
+    store_name: str = Field(..., max_length=255, description="Store name")
+    open_date: date = Field(..., description="Opening date for the stock")
+    entries: List[OpenStockEntryBase] = Field(..., description="List of open stock entries")
 
 
-@router.get("/", response_model=StockTakeListResponse)
-def list_stock_takes(
-    db: Session = Depends(get_db),
-    skip: int = Query(0, ge=0, description="Number of records to skip"),
-    limit: int = Query(100, ge=1, le=500, description="Maximum number of records to return"),
-    store_name: Optional[str] = Query(None, description="Filter by store name"),
-    stock_status: Optional[str] = Query(None, description="Filter by status (active/completed)"),
-    date_from: Optional[date] = Query(None, description="Filter by date from"),
-    date_to: Optional[date] = Query(None, description="Filter by date to")
-):
-    """
-    List all stock takes with optional filters and pagination.
+class OpenStockUpdate(BaseModel):
+    """Schema for updating an open stock entry"""
+    product_name: Optional[str] = Field(None, max_length=255)
+    promoter_name: Optional[str] = Field(None, max_length=255)
+    open_qty: Optional[float] = Field(None, ge=0)
 
-    - **skip**: Number of records to skip (for pagination)
-    - **limit**: Maximum number of records to return
-    - **store_name**: Filter by store name (partial match)
-    - **stock_status**: Filter by status (active or completed)
-    - **date_from**: Filter by date from
-    - **date_to**: Filter by date to
-    """
-    stock_takes, total = StockTakeRepository.get_all(
-        db, skip, limit, store_name, stock_status, date_from, date_to
-    )
-
-    items = [StockTakeResponse.model_validate(st) for st in stock_takes]
-    return StockTakeListResponse(items=items, total=total, skip=skip, limit=limit)
+    @validator('open_qty')
+    def validate_quantity(cls, v):
+        if v is not None and v < 0:
+            raise ValueError('Quantity must be non-negative')
+        return v
 
 
-@router.get("/by-store-date", response_model=StockTakeResponse)
-def get_stock_take_by_store_and_date(
-    store_name: str = Query(..., description="Store name"),
-    stock_date: date = Query(..., description="Stock take date"),
-    db: Session = Depends(get_db)
-):
-    """
-    Get a stock take by store name and date.
+class OpenStockResponse(OpenStockEntryBase):
+    """Schema for open stock response"""
+    id: int
+    store_name: str
+    open_date: date
+    created_at: datetime
+    updated_at: datetime
+    pos_weight: Optional[float] = Field(None, description="Weight from POS barcode products")
 
-    - **store_name**: Name of the store
-    - **stock_date**: Stock take date
-    """
-    db_stock_take = StockTakeRepository.get_by_store_and_date(db, store_name, stock_date)
-    if not db_stock_take:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Stock take not found for store '{store_name}' on date '{stock_date}'"
-        )
-    return StockTakeResponse.model_validate(db_stock_take)
-
-
-@router.get("/{stock_take_id}", response_model=StockTakeResponse)
-def get_stock_take(
-    stock_take_id: int,
-    db: Session = Depends(get_db)
-):
-    """
-    Get a specific stock take by ID.
-
-    - **stock_take_id**: ID of the stock take
-    """
-    db_stock_take = StockTakeRepository.get_by_id(db, stock_take_id)
-    if not db_stock_take:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Stock take with ID {stock_take_id} not found"
-        )
-    return StockTakeResponse.model_validate(db_stock_take)
-
-
-@router.put("/{stock_take_id}", response_model=StockTakeResponse)
-def update_stock_take(
-    stock_take_id: int,
-    stock_take_update: StockTakeUpdate,
-    db: Session = Depends(get_db)
-):
-    """
-    Update a stock take status.
-
-    - **stock_take_id**: ID of the stock take
-    - **status**: Updated status (optional)
-    """
-    db_stock_take = StockTakeRepository.update(db, stock_take_id, stock_take_update)
-    if not db_stock_take:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Stock take with ID {stock_take_id} not found"
-        )
-    return StockTakeResponse.model_validate(db_stock_take)
-
-
-@router.delete("/{stock_take_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_stock_take(
-    stock_take_id: int,
-    db: Session = Depends(get_db)
-):
-    """
-    Delete a stock take.
-
-    - **stock_take_id**: ID of the stock take
-    """
-    success = StockTakeRepository.delete(db, stock_take_id)
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Stock take with ID {stock_take_id} not found"
-        )
-    return None
-
-
-@router.post("/{stock_take_id}/complete", response_model=StockTakeResponse)
-def complete_stock_take(
-    stock_take_id: int,
-    db: Session = Depends(get_db)
-):
-    """
-    Mark a stock take as completed.
-
-    - **stock_take_id**: ID of the stock take
-    """
-    db_stock_take = StockTakeRepository.complete_stock_take(db, stock_take_id)
-    if not db_stock_take:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Stock take with ID {stock_take_id} not found"
-        )
-    return StockTakeResponse.model_validate(db_stock_take)
+    class Config:
+        from_attributes = True
 
 
 # ============================================================================
-# OPEN STOCK ENDPOINTS (Date-based, independent of stock_take)
+# Close Stock Schemas (Date-based, independent of stock_take)
 # ============================================================================
 
-@router.post("/open-stock", response_model=List[OpenStockResponse], status_code=status.HTTP_201_CREATED)
-def create_open_stock(
-    data: OpenStockCreate,
-    db: Session = Depends(get_db)
-):
-    """
-    Create or update open stock entries for a specific store and date.
-    If an entry already exists (same store + date + product + promoter), it will be updated.
+class CloseStockEntryBase(BaseModel):
+    """Base schema for a single Close Stock entry"""
+    product_name: str = Field(..., max_length=255, description="Product name")
+    promoter_name: str = Field(..., max_length=255, description="Promoter name")
+    close_qty: float = Field(..., ge=0, description="Closing quantity")
 
-    - **store_name**: Name of the store
-    - **open_date**: Date for the opening stock
-    - **entries**: List of open stock entries to create/update
-    """
-    db_entries = OpenStockRepository.bulk_create(db, data.store_name, data.open_date, data.entries)
-    return [OpenStockResponse.model_validate(entry) for entry in db_entries]
+    @validator('close_qty')
+    def validate_quantity(cls, v):
+        if v < 0:
+            raise ValueError('Quantity must be non-negative')
+        return v
 
 
-@router.get("/open-stock", response_model=List[OpenStockResponse])
-def get_open_stock_by_store(
-    store_name: str = Query(..., description="Store name"),
-    open_date: Optional[date] = Query(None, description="Specific date to filter (if not provided, returns all dates)"),
-    date_from: Optional[date] = Query(None, description="Filter by date from"),
-    date_to: Optional[date] = Query(None, description="Filter by date to"),
-    db: Session = Depends(get_db)
-):
-    """
-    Get open stock entries for a store with optional date filters.
-
-    - **store_name**: Name of the store (required)
-    - **open_date**: Specific date to filter (optional)
-    - **date_from**: Filter by date from (optional)
-    - **date_to**: Filter by date to (optional)
-    """
-    if open_date:
-        entries = OpenStockRepository.get_by_store_and_date(db, store_name, open_date)
-    else:
-        entries = OpenStockRepository.get_by_store(db, store_name, date_from, date_to)
-    return [OpenStockResponse.model_validate(entry) for entry in entries]
+class CloseStockCreate(BaseModel):
+    """Schema for creating close stock entries (date-based)"""
+    store_name: str = Field(..., max_length=255, description="Store name")
+    close_date: date = Field(..., description="Closing date for the stock")
+    entries: List[CloseStockEntryBase] = Field(..., description="List of close stock entries")
 
 
-@router.get("/open-stock/{id}", response_model=OpenStockResponse)
-def get_open_stock(
-    id: int,
-    db: Session = Depends(get_db)
-):
-    """
-    Get a specific open stock entry by ID.
+class CloseStockUpdate(BaseModel):
+    """Schema for updating a close stock entry"""
+    product_name: Optional[str] = Field(None, max_length=255)
+    promoter_name: Optional[str] = Field(None, max_length=255)
+    close_qty: Optional[float] = Field(None, ge=0)
 
-    - **id**: ID of the open stock entry
-    """
-    db_entry = OpenStockRepository.get_by_id(db, id)
-    if not db_entry:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Open stock entry with ID {id} not found"
-        )
-    return OpenStockResponse.model_validate(db_entry)
+    @validator('close_qty')
+    def validate_quantity(cls, v):
+        if v is not None and v < 0:
+            raise ValueError('Quantity must be non-negative')
+        return v
 
 
-@router.put("/open-stock/{id}", response_model=OpenStockResponse)
-def update_open_stock(
-    id: int,
-    open_stock_update: OpenStockUpdate,
-    db: Session = Depends(get_db)
-):
-    """
-    Update a specific open stock entry.
+class CloseStockResponse(CloseStockEntryBase):
+    """Schema for close stock response"""
+    id: int
+    store_name: str
+    close_date: date
+    created_at: datetime
+    updated_at: datetime
+    pos_weight: Optional[float] = Field(None, description="Weight from POS barcode products")
 
-    - **id**: ID of the open stock entry
-    - **product_name**: Updated product name (optional)
-    - **promoter_name**: Updated promoter name (optional)
-    - **open_qty**: Updated opening quantity (optional)
-    """
-    db_entry = OpenStockRepository.update(db, id, open_stock_update)
-    if not db_entry:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Open stock entry with ID {id} not found"
-        )
-    return OpenStockResponse.model_validate(db_entry)
-
-
-@router.delete("/open-stock/{id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_open_stock(
-    id: int,
-    db: Session = Depends(get_db)
-):
-    """
-    Delete a specific open stock entry.
-
-    - **id**: ID of the open stock entry
-    """
-    success = OpenStockRepository.delete(db, id)
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Open stock entry with ID {id} not found"
-        )
-    return None
+    class Config:
+        from_attributes = True
 
 
 # ============================================================================
-# CLOSE STOCK ENDPOINTS (Date-based, independent of stock_take)
+# Stock Take Schemas (Simplified - store + date based)
 # ============================================================================
 
-@router.post("/close-stock", response_model=List[CloseStockResponse], status_code=status.HTTP_201_CREATED)
-def create_close_stock(
-    data: CloseStockCreate,
-    db: Session = Depends(get_db)
-):
-    """
-    Create or update close stock entries for a specific store and date.
-    If an entry already exists (same store + date + product + promoter), it will be updated.
-
-    - **store_name**: Name of the store
-    - **close_date**: Date for the closing stock
-    - **entries**: List of close stock entries to create/update
-    """
-    db_entries = CloseStockRepository.bulk_create(db, data.store_name, data.close_date, data.entries)
-    return [CloseStockResponse.model_validate(entry) for entry in db_entries]
+class StockTakeBase(BaseModel):
+    """Base schema for Stock Take"""
+    store_name: str = Field(..., max_length=255, description="Store name")
+    stock_date: date = Field(..., description="Stock take date")
 
 
-@router.get("/close-stock", response_model=List[CloseStockResponse])
-def get_close_stock_by_store(
-    store_name: str = Query(..., description="Store name"),
-    close_date: Optional[date] = Query(None, description="Specific date to filter (if not provided, returns all dates)"),
-    date_from: Optional[date] = Query(None, description="Filter by date from"),
-    date_to: Optional[date] = Query(None, description="Filter by date to"),
-    db: Session = Depends(get_db)
-):
-    """
-    Get close stock entries for a store with optional date filters.
-
-    - **store_name**: Name of the store (required)
-    - **close_date**: Specific date to filter (optional)
-    - **date_from**: Filter by date from (optional)
-    - **date_to**: Filter by date to (optional)
-    """
-    if close_date:
-        entries = CloseStockRepository.get_by_store_and_date(db, store_name, close_date)
-    else:
-        entries = CloseStockRepository.get_by_store(db, store_name, date_from, date_to)
-    return [CloseStockResponse.model_validate(entry) for entry in entries]
+class StockTakeCreate(StockTakeBase):
+    """Schema for creating a new stock take"""
+    pass
 
 
-@router.get("/close-stock/{id}", response_model=CloseStockResponse)
-def get_close_stock(
-    id: int,
-    db: Session = Depends(get_db)
-):
-    """
-    Get a specific close stock entry by ID.
-
-    - **id**: ID of the close stock entry
-    """
-    db_entry = CloseStockRepository.get_by_id(db, id)
-    if not db_entry:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Close stock entry with ID {id} not found"
-        )
-    return CloseStockResponse.model_validate(db_entry)
+class StockTakeUpdate(BaseModel):
+    """Schema for updating a stock take"""
+    status: Optional[str] = Field(None, max_length=50)
 
 
-@router.put("/close-stock/{id}", response_model=CloseStockResponse)
-def update_close_stock(
-    id: int,
-    close_stock_update: CloseStockUpdate,
-    db: Session = Depends(get_db)
-):
-    """
-    Update a specific close stock entry.
+class StockTakeResponse(StockTakeBase):
+    """Schema for stock take response"""
+    id: int
+    status: str
+    created_at: datetime
+    updated_at: datetime
 
-    - **id**: ID of the close stock entry
-    - **product_name**: Updated product name (optional)
-    - **promoter_name**: Updated promoter name (optional)
-    - **close_qty**: Updated closing quantity (optional)
-    """
-    db_entry = CloseStockRepository.update(db, id, close_stock_update)
-    if not db_entry:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Close stock entry with ID {id} not found"
-        )
-    return CloseStockResponse.model_validate(db_entry)
+    class Config:
+        from_attributes = True
 
 
-@router.delete("/close-stock/{id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_close_stock(
-    id: int,
-    db: Session = Depends(get_db)
-):
-    """
-    Delete a specific close stock entry.
+class StockTakeListResponse(BaseModel):
+    """Schema for paginated stock take list response"""
+    items: List[StockTakeResponse]
+    total: int
+    skip: int
+    limit: int
 
-    - **id**: ID of the close stock entry
-    """
-    success = CloseStockRepository.delete(db, id)
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Close stock entry with ID {id} not found"
-        )
-    return None
+    class Config:
+        from_attributes = True
