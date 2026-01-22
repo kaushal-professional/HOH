@@ -62,11 +62,11 @@ class OpenStockBulkCreate(BaseModel):
 
 
 # ============================================================================
-# Close Stock Schemas
+# Close Stock Schemas (Date-based, independent of stock_take)
 # ============================================================================
 
-class CloseStockBase(BaseModel):
-    """Base schema for Close Stock"""
+class CloseStockEntryBase(BaseModel):
+    """Base schema for a single Close Stock entry"""
     product_name: str = Field(..., max_length=255, description="Product name")
     promoter_name: str = Field(..., max_length=255, description="Promoter name")
     close_qty: float = Field(..., ge=0, description="Closing quantity")
@@ -78,9 +78,11 @@ class CloseStockBase(BaseModel):
         return v
 
 
-class CloseStockCreate(CloseStockBase):
-    """Schema for creating a new close stock entry"""
-    pass
+class CloseStockCreate(BaseModel):
+    """Schema for creating close stock entries (date-based)"""
+    store_name: str = Field(..., max_length=255, description="Store name")
+    close_date: date = Field(..., description="Closing date for the stock")
+    entries: List[CloseStockEntryBase] = Field(..., description="List of close stock entries")
 
 
 class CloseStockUpdate(BaseModel):
@@ -96,27 +98,17 @@ class CloseStockUpdate(BaseModel):
         return v
 
 
-class CloseStockResponse(CloseStockBase):
+class CloseStockResponse(CloseStockEntryBase):
     """Schema for close stock response"""
     id: int
-    stock_take_id: UUID
+    store_name: str
+    close_date: date
     created_at: datetime
     updated_at: datetime
     pos_weight: Optional[float] = Field(None, description="Weight from POS barcode products")
 
     class Config:
         from_attributes = True
-
-
-class CloseStockBulkCreate(BaseModel):
-    """Schema for bulk creating close stock entries"""
-    entries: List[CloseStockCreate] = Field(..., description="List of close stock entries")
-
-
-class CloseStockByStore(BaseModel):
-    """Schema for creating close stock by store name"""
-    store_name: str = Field(..., max_length=255, description="Store name to find active stock take")
-    entries: List[CloseStockCreate] = Field(..., description="List of close stock entries")
 
 
 # ============================================================================
@@ -162,7 +154,6 @@ class StockTakeResponse(StockTakeBase):
     created_at: datetime
     updated_at: datetime
     open_stock_count: int = Field(0, description="Count of open stock entries")
-    close_stock_count: int = Field(0, description="Count of close stock entries")
 
     class Config:
         from_attributes = True
@@ -171,7 +162,6 @@ class StockTakeResponse(StockTakeBase):
 class StockTakeSummaryResponse(StockTakeResponse):
     """Schema for stock take summary with all stock entries"""
     open_stocks: List[OpenStockResponse] = Field([], description="List of open stock entries")
-    close_stocks: List[CloseStockResponse] = Field([], description="List of close stock entries")
 
     class Config:
         from_attributes = True
