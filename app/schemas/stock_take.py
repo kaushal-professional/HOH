@@ -10,11 +10,11 @@ from uuid import UUID
 
 
 # ============================================================================
-# Open Stock Schemas
+# Open Stock Schemas (Date-based, independent of stock_take)
 # ============================================================================
 
-class OpenStockBase(BaseModel):
-    """Base schema for Open Stock"""
+class OpenStockEntryBase(BaseModel):
+    """Base schema for a single Open Stock entry"""
     product_name: str = Field(..., max_length=255, description="Product name")
     promoter_name: str = Field(..., max_length=255, description="Promoter name")
     open_qty: float = Field(..., ge=0, description="Opening quantity")
@@ -26,9 +26,11 @@ class OpenStockBase(BaseModel):
         return v
 
 
-class OpenStockCreate(OpenStockBase):
-    """Schema for creating a new open stock entry"""
-    pass
+class OpenStockCreate(BaseModel):
+    """Schema for creating open stock entries (date-based)"""
+    store_name: str = Field(..., max_length=255, description="Store name")
+    open_date: date = Field(..., description="Opening date for the stock")
+    entries: List[OpenStockEntryBase] = Field(..., description="List of open stock entries")
 
 
 class OpenStockUpdate(BaseModel):
@@ -44,10 +46,11 @@ class OpenStockUpdate(BaseModel):
         return v
 
 
-class OpenStockResponse(OpenStockBase):
+class OpenStockResponse(OpenStockEntryBase):
     """Schema for open stock response"""
     id: int
-    stock_take_id: UUID
+    store_name: str
+    open_date: date
     created_at: datetime
     updated_at: datetime
     pos_weight: Optional[float] = Field(None, description="Weight from POS barcode products")
@@ -56,17 +59,12 @@ class OpenStockResponse(OpenStockBase):
         from_attributes = True
 
 
-class OpenStockBulkCreate(BaseModel):
-    """Schema for bulk creating open stock entries"""
-    entries: List[OpenStockCreate] = Field(..., description="List of open stock entries")
-
-
 # ============================================================================
-# Close Stock Schemas
+# Close Stock Schemas (Date-based, independent of stock_take)
 # ============================================================================
 
-class CloseStockBase(BaseModel):
-    """Base schema for Close Stock"""
+class CloseStockEntryBase(BaseModel):
+    """Base schema for a single Close Stock entry"""
     product_name: str = Field(..., max_length=255, description="Product name")
     promoter_name: str = Field(..., max_length=255, description="Promoter name")
     close_qty: float = Field(..., ge=0, description="Closing quantity")
@@ -78,9 +76,11 @@ class CloseStockBase(BaseModel):
         return v
 
 
-class CloseStockCreate(CloseStockBase):
-    """Schema for creating a new close stock entry"""
-    pass
+class CloseStockCreate(BaseModel):
+    """Schema for creating close stock entries (date-based)"""
+    store_name: str = Field(..., max_length=255, description="Store name")
+    close_date: date = Field(..., description="Closing date for the stock")
+    entries: List[CloseStockEntryBase] = Field(..., description="List of close stock entries")
 
 
 class CloseStockUpdate(BaseModel):
@@ -96,10 +96,11 @@ class CloseStockUpdate(BaseModel):
         return v
 
 
-class CloseStockResponse(CloseStockBase):
+class CloseStockResponse(CloseStockEntryBase):
     """Schema for close stock response"""
     id: int
-    stock_take_id: UUID
+    store_name: str
+    close_date: date
     created_at: datetime
     updated_at: datetime
     pos_weight: Optional[float] = Field(None, description="Weight from POS barcode products")
@@ -108,70 +109,32 @@ class CloseStockResponse(CloseStockBase):
         from_attributes = True
 
 
-class CloseStockBulkCreate(BaseModel):
-    """Schema for bulk creating close stock entries"""
-    entries: List[CloseStockCreate] = Field(..., description="List of close stock entries")
-
-
-class CloseStockByStore(BaseModel):
-    """Schema for creating close stock by store name"""
-    store_name: str = Field(..., max_length=255, description="Store name to find active stock take")
-    entries: List[CloseStockCreate] = Field(..., description="List of close stock entries")
-
-
 # ============================================================================
-# Stock Take Schemas
+# Stock Take Schemas (Simplified - store + date based)
 # ============================================================================
 
 class StockTakeBase(BaseModel):
     """Base schema for Stock Take"""
     store_name: str = Field(..., max_length=255, description="Store name")
-    start_date: date = Field(..., description="Stock take start date")
-    end_date: Optional[date] = Field(None, description="Stock take end date")
-
-    @validator('end_date')
-    def validate_end_date(cls, v, values):
-        if v and 'start_date' in values and v < values['start_date']:
-            raise ValueError('End date must be greater than or equal to start date')
-        return v
+    stock_date: date = Field(..., description="Stock take date")
 
 
 class StockTakeCreate(StockTakeBase):
     """Schema for creating a new stock take"""
-    open_stock_entries: Optional[List[OpenStockCreate]] = Field(None, description="Optional list of opening stock entries")
+    pass
 
 
 class StockTakeUpdate(BaseModel):
     """Schema for updating a stock take"""
-    store_name: Optional[str] = Field(None, max_length=255)
-    start_date: Optional[date] = None
-    end_date: Optional[date] = None
     status: Optional[str] = Field(None, max_length=50)
-
-    @validator('end_date')
-    def validate_end_date(cls, v, values):
-        if v and 'start_date' in values and values['start_date'] and v < values['start_date']:
-            raise ValueError('End date must be greater than or equal to start date')
-        return v
 
 
 class StockTakeResponse(StockTakeBase):
     """Schema for stock take response"""
-    stock_take_id: UUID
+    id: int
     status: str
     created_at: datetime
     updated_at: datetime
-    open_stock_count: int = Field(0, description="Count of open stock entries")
-    close_stock_count: int = Field(0, description="Count of close stock entries")
-
-    class Config:
-        from_attributes = True
-
-
-class StockTakeSummaryResponse(StockTakeResponse):
-    """Schema for stock take summary with all stock entries"""
-    open_stocks: List[OpenStockResponse] = Field([], description="List of open stock entries")
-    close_stocks: List[CloseStockResponse] = Field([], description="List of close stock entries")
 
     class Config:
         from_attributes = True
