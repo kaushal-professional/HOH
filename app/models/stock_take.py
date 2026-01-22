@@ -25,7 +25,6 @@ class StockTake(Base):
 
     # Relationships
     open_stocks = relationship("OpenStock", back_populates="stock_take", cascade="all, delete-orphan")
-    close_stocks = relationship("CloseStock", back_populates="stock_take", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<StockTake(stock_take_id='{self.stock_take_id}', store='{self.store_name}', status='{self.status}')>"
@@ -56,24 +55,22 @@ class OpenStock(Base):
 
 
 class CloseStock(Base):
-    """Close Stock model - stores closing stock quantities"""
+    """Close Stock model - stores closing stock quantities (date-based, independent of stock_take)"""
     __tablename__ = "close_stock"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    stock_take_id = Column(UUID(as_uuid=True), ForeignKey('stock_take.stock_take_id', ondelete='CASCADE'), nullable=False, index=True)
+    store_name = Column(String(255), nullable=False, index=True)
+    close_date = Column(Date, nullable=False, index=True)
     product_name = Column(String(255), nullable=False, index=True)
     promoter_name = Column(String(255), nullable=False, index=True)
     close_qty = Column(Float, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    # Relationships
-    stock_take = relationship("StockTake", back_populates="close_stocks")
-
-    # Unique constraint
+    # Unique constraint: one entry per store + date + product + promoter
     __table_args__ = (
-        UniqueConstraint('stock_take_id', 'product_name', 'promoter_name', name='uq_close_stock_entry'),
+        UniqueConstraint('store_name', 'close_date', 'product_name', 'promoter_name', name='uq_close_stock_entry'),
     )
 
     def __repr__(self):
-        return f"<CloseStock(id={self.id}, product='{self.product_name}', promoter='{self.promoter_name}', qty={self.close_qty})>"
+        return f"<CloseStock(id={self.id}, store='{self.store_name}', date='{self.close_date}', product='{self.product_name}', qty={self.close_qty})>"
