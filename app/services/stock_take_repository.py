@@ -15,7 +15,7 @@ from app.models.stock_take import StockTake, OpenStock, CloseStock
 from app.schemas.stock_take import (
     StockTakeCreate, StockTakeUpdate,
     OpenStockCreate, OpenStockUpdate,
-    CloseStockCreate, CloseStockUpdate,
+    CloseStockCreate, CloseStockUpdate, CloseStockEntryBase,
 )
 
 
@@ -128,7 +128,6 @@ class StockTakeRepository:
 
         # Get paginated results with related stocks
         stock_takes = query.options(joinedload(StockTake.open_stocks))\
-            .options(joinedload(StockTake.close_stocks))\
             .order_by(StockTake.created_at.desc())\
             .offset(skip).limit(limit).all()
 
@@ -193,10 +192,9 @@ class StockTakeRepository:
 
     @staticmethod
     def get_summary(db: Session, stock_take_id: UUID) -> Optional[StockTake]:
-        """Get stock take with all open and close stocks"""
+        """Get stock take with all open stocks"""
         return db.query(StockTake)\
             .options(joinedload(StockTake.open_stocks))\
-            .options(joinedload(StockTake.close_stocks))\
             .filter(StockTake.stock_take_id == stock_take_id)\
             .first()
 
@@ -333,58 +331,21 @@ class OpenStockRepository:
 
 
 class CloseStockRepository:
-    """Repository for Close Stock operations"""
+    """Repository for Close Stock operations (date-based, independent of stock_take)"""
 
     @staticmethod
-    def create(db: Session, stock_take_id: UUID, close_stock: CloseStockCreate) -> CloseStock:
-        """Create a single close stock entry"""
-        # Verify stock take exists
-        stock_take = StockTakeRepository.get_by_id(db, stock_take_id)
-        if not stock_take:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Stock take with ID {stock_take_id} not found"
-            )
-
-        try:
-            db_close_stock = CloseStock(
-                stock_take_id=stock_take_id,
-                **close_stock.model_dump()
-            )
-            db.add(db_close_stock)
-            
-            # Update end_date and status in stock_take_prod table
-            from datetime import date
-            stock_take.end_date = date.today()
-            stock_take.status = 'Closed'
-            
-            db.commit()
-            db.refresh(db_close_stock)
-            return db_close_stock
-        except IntegrityError:
-            db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Close stock entry already exists for product '{close_stock.product_name}' and promoter '{close_stock.promoter_name}'"
-            )
-
-    @staticmethod
-    def bulk_create(db: Session, stock_take_id: UUID, entries: List[CloseStockCreate]) -> List[CloseStock]:
-        """Create or update multiple close stock entries"""
-        # Verify stock take exists
-        stock_take = StockTakeRepository.get_by_id(db, stock_take_id)
-        if not stock_take:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Stock take with ID {stock_take_id} not found"
-            )
-
+    def bulk_create(db: Session, store_name: str, close_date: date, entries: List[CloseStockEntryBase]) -> List[CloseStock]:
+        """
+        Create or update multiple close stock entries for a specific store and date.
+        If an entry already exists (same store + date + product + promoter), it will be updated.
+        """
         created_entries = []
         for entry in entries:
-            # Check if entry exists
+            # Check if entry exists for this store + date + product + promoter
             existing = db.query(CloseStock).filter(
                 and_(
-                    CloseStock.stock_take_id == stock_take_id,
+                    CloseStock.store_name == store_name,
+                    CloseStock.close_date == close_date,
                     CloseStock.product_name == entry.product_name,
                     CloseStock.promoter_name == entry.promoter_name
                 )
@@ -397,16 +358,14 @@ class CloseStockRepository:
             else:
                 # Create new entry
                 db_close_stock = CloseStock(
-                    stock_take_id=stock_take_id,
-                    **entry.model_dump()
+                    store_name=store_name,
+                    close_date=close_date,
+                    product_name=entry.product_name,
+                    promoter_name=entry.promoter_name,
+                    close_qty=entry.close_qty
                 )
                 db.add(db_close_stock)
                 created_entries.append(db_close_stock)
-
-        # Update end_date and status in stock_take_prod table
-        from datetime import date
-        stock_take.end_date = date.today()
-        stock_take.status = 'completed'
 
         db.commit()
         for entry in created_entries:
@@ -419,12 +378,29 @@ class CloseStockRepository:
         return db.query(CloseStock).filter(CloseStock.id == close_stock_id).first()
 
     @staticmethod
-    def get_by_stock_take(db: Session, stock_take_id: UUID) -> List[CloseStock]:
-        """Get all close stock entries for a stock take"""
+    def get_by_store_and_date(db: Session, store_name: str, close_date: date) -> List[CloseStock]:
+        """Get all close stock entries for a specific store and date"""
         return db.query(CloseStock)\
-            .filter(CloseStock.stock_take_id == stock_take_id)\
+            .filter(
+                and_(
+                    CloseStock.store_name == store_name,
+                    CloseStock.close_date == close_date
+                )
+            )\
             .order_by(CloseStock.product_name, CloseStock.promoter_name)\
             .all()
+
+    @staticmethod
+    def get_by_store(db: Session, store_name: str, date_from: Optional[date] = None, date_to: Optional[date] = None) -> List[CloseStock]:
+        """Get all close stock entries for a store with optional date range filter"""
+        query = db.query(CloseStock).filter(CloseStock.store_name == store_name)
+
+        if date_from:
+            query = query.filter(CloseStock.close_date >= date_from)
+        if date_to:
+            query = query.filter(CloseStock.close_date <= date_to)
+
+        return query.order_by(CloseStock.close_date.desc(), CloseStock.product_name, CloseStock.promoter_name).all()
 
     @staticmethod
     def update(db: Session, close_stock_id: int, close_stock_update: CloseStockUpdate) -> Optional[CloseStock]:
@@ -442,7 +418,8 @@ class CloseStockRepository:
 
             existing = db.query(CloseStock).filter(
                 and_(
-                    CloseStock.stock_take_id == db_close_stock.stock_take_id,
+                    CloseStock.store_name == db_close_stock.store_name,
+                    CloseStock.close_date == db_close_stock.close_date,
                     CloseStock.product_name == product_name,
                     CloseStock.promoter_name == promoter_name,
                     CloseStock.id != close_stock_id
@@ -452,7 +429,7 @@ class CloseStockRepository:
             if existing:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail=f"Close stock entry already exists for product '{product_name}' and promoter '{promoter_name}'"
+                    detail=f"Close stock entry already exists for product '{product_name}' and promoter '{promoter_name}' on this date"
                 )
 
         for field, value in update_data.items():
