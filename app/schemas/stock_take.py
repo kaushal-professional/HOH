@@ -149,3 +149,52 @@ class StockTakeListResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ============================================================================
+# Stock Take Summary Schemas (Linking open_stock and close_stock by date range)
+# ============================================================================
+
+class OpenStockSummaryItem(BaseModel):
+    """Schema for open stock item in summary"""
+    id: int
+    product_name: str
+    promoter_name: str
+    open_qty: float
+    open_date: date
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CloseStockSummaryItem(BaseModel):
+    """Schema for close stock item in summary"""
+    id: int
+    product_name: str
+    promoter_name: str
+    close_qty: float
+    close_date: date
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class StockTakeSummaryResponse(BaseModel):
+    """
+    Schema for linked stock take summary.
+    Links open_stock and close_stock by store_name and date range.
+    - start_date: Earliest created_at from open_stock entries
+    - end_date: Latest created_at from close_stock entries
+    """
+    store_name: str
+    start_date: Optional[datetime] = Field(None, description="Earliest created_at from open_stock")
+    end_date: Optional[datetime] = Field(None, description="Latest created_at from close_stock")
+    open_stock_entries: List[OpenStockSummaryItem] = Field(default_factory=list)
+    close_stock_entries: List[CloseStockSummaryItem] = Field(default_factory=list)
+    total_open_stock: int = Field(0, description="Total number of open stock entries")
+    total_close_stock: int = Field(0, description="Total number of close stock entries")
+
+    class Config:
+        from_attributes = True
