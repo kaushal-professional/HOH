@@ -4,9 +4,9 @@ Handles all database queries and operations for the stock take management system
 All operations are date-based and independent.
 """
 
-from typing import List, Optional, Tuple
-from datetime import date
-from sqlalchemy import and_
+from typing import List, Optional, Tuple, Dict, Any
+from datetime import date, datetime
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException, status
@@ -380,3 +380,69 @@ class CloseStockRepository:
         db.delete(db_close_stock)
         db.commit()
         return True
+
+
+class StockTakeSummaryRepository:
+    """Repository for linked Stock Take Summary operations"""
+
+    @staticmethod
+    def get_summary_by_store(
+        db: Session,
+        store_name: str,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
+    ) -> Dict[str, Any]:
+        """
+        Get linked stock take summary for a store.
+        Links open_stock and close_stock by store_name.
+        - start_date: Filter open_stock by created_at >= start_date
+        - end_date: Filter close_stock by created_at <= end_date
+
+        Returns:
+            Dictionary with store_name, start_date (earliest open_stock.created_at),
+            end_date (latest close_stock.created_at), and all entries.
+        """
+        # Query open stock entries for this store
+        open_query = db.query(OpenStock).filter(OpenStock.store_name == store_name)
+        if start_date:
+            open_query = open_query.filter(OpenStock.created_at >= start_date)
+        if end_date:
+            open_query = open_query.filter(OpenStock.created_at <= end_date)
+
+        open_entries = open_query.order_by(OpenStock.created_at, OpenStock.product_name).all()
+
+        # Query close stock entries for this store
+        close_query = db.query(CloseStock).filter(CloseStock.store_name == store_name)
+        if start_date:
+            close_query = close_query.filter(CloseStock.created_at >= start_date)
+        if end_date:
+            close_query = close_query.filter(CloseStock.created_at <= end_date)
+
+        close_entries = close_query.order_by(CloseStock.created_at, CloseStock.product_name).all()
+
+        # Get earliest created_at from open_stock (start_date)
+        earliest_open = db.query(func.min(OpenStock.created_at))\
+            .filter(OpenStock.store_name == store_name).scalar()
+
+        # Get latest created_at from close_stock (end_date)
+        latest_close = db.query(func.max(CloseStock.created_at))\
+            .filter(CloseStock.store_name == store_name).scalar()
+
+        return {
+            "store_name": store_name,
+            "start_date": earliest_open,
+            "end_date": latest_close,
+            "open_stock_entries": open_entries,
+            "close_stock_entries": close_entries,
+            "total_open_stock": len(open_entries),
+            "total_close_stock": len(close_entries)
+        }
+
+    @staticmethod
+    def get_all_stores_with_stock(db: Session) -> List[str]:
+        """Get list of all stores that have open or close stock entries"""
+        open_stores = db.query(OpenStock.store_name).distinct().all()
+        close_stores = db.query(CloseStock.store_name).distinct().all()
+
+        all_stores = set([s[0] for s in open_stores] + [s[0] for s in close_stores])
+        return sorted(list(all_stores))
