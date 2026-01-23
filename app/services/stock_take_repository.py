@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException, status
 
 from app.models.stock_take import StockTake, OpenStock, CloseStock
+from app.models.pos_entry import GeneralNote, Item
 from app.schemas.stock_take import (
     StockTakeCreate, StockTakeUpdate,
     OpenStockUpdate, OpenStockEntryBase,
@@ -394,13 +395,13 @@ class StockTakeSummaryRepository:
     ) -> Dict[str, Any]:
         """
         Get linked stock take summary for a store.
-        Links open_stock and close_stock by store_name.
-        - start_date: Filter open_stock by created_at >= start_date
-        - end_date: Filter close_stock by created_at <= end_date
+        Links open_stock, close_stock, and POS sales by store_name.
+        - start_date: Filter by created_at/note_date >= start_date
+        - end_date: Filter by created_at/note_date <= end_date
 
         Returns:
             Dictionary with store_name, start_date (earliest open_stock.created_at),
-            end_date (latest close_stock.created_at), and all entries.
+            end_date (latest close_stock.created_at), all entries, and POS sales.
         """
         # Query open stock entries for this store
         open_query = db.query(OpenStock).filter(OpenStock.store_name == store_name)
@@ -420,6 +421,29 @@ class StockTakeSummaryRepository:
 
         close_entries = close_query.order_by(CloseStock.created_at, CloseStock.product_name).all()
 
+        # Query POS sales from items table - aggregate quantity by product
+        pos_query = db.query(
+            Item.product.label('product_name'),
+            func.sum(Item.quantity).label('total_quantity')
+        ).join(
+            GeneralNote, Item.general_note_id == GeneralNote.id
+        ).filter(
+            Item.store_name == store_name
+        )
+
+        if start_date:
+            pos_query = pos_query.filter(GeneralNote.note_date >= start_date.date() if isinstance(start_date, datetime) else start_date)
+        if end_date:
+            pos_query = pos_query.filter(GeneralNote.note_date <= end_date.date() if isinstance(end_date, datetime) else end_date)
+
+        pos_sales_result = pos_query.group_by(Item.product).all()
+
+        # Convert to dict: {product_name: quantity}
+        pos_sales = {
+            sale.product_name: float(sale.total_quantity) if sale.total_quantity else 0.0
+            for sale in pos_sales_result
+        }
+
         # Get earliest created_at from open_stock (start_date)
         earliest_open = db.query(func.min(OpenStock.created_at))\
             .filter(OpenStock.store_name == store_name).scalar()
@@ -434,6 +458,7 @@ class StockTakeSummaryRepository:
             "end_date": latest_close,
             "open_stock_entries": open_entries,
             "close_stock_entries": close_entries,
+            "pos_sales": pos_sales,
             "total_open_stock": len(open_entries),
             "total_close_stock": len(close_entries)
         }
