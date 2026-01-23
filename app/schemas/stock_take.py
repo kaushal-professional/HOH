@@ -4,7 +4,7 @@ Request and response models for API endpoints.
 """
 
 from datetime import date, datetime
-from typing import Optional, List
+from typing import Optional, List, Dict
 from pydantic import BaseModel, Field, validator
 from uuid import UUID
 
@@ -184,7 +184,7 @@ class CloseStockSummaryItem(BaseModel):
 class StockTakeSummaryResponse(BaseModel):
     """
     Schema for linked stock take summary.
-    Links open_stock and close_stock by store_name and date range.
+    Links open_stock, close_stock, and POS sales by store_name and date range.
     - start_date: Earliest created_at from open_stock entries
     - end_date: Latest created_at from close_stock entries
     """
@@ -193,6 +193,7 @@ class StockTakeSummaryResponse(BaseModel):
     end_date: Optional[datetime] = Field(None, description="Latest created_at from close_stock")
     open_stock_entries: List[OpenStockSummaryItem] = Field(default_factory=list)
     close_stock_entries: List[CloseStockSummaryItem] = Field(default_factory=list)
+    pos_sales: Dict[str, float] = Field(default_factory=dict, description="POS sales by product {product_name: quantity}")
     total_open_stock: int = Field(0, description="Total number of open stock entries")
     total_close_stock: int = Field(0, description="Total number of close stock entries")
 
