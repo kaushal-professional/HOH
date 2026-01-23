@@ -123,6 +123,50 @@ def get_stock_take_by_store_and_date(
     return StockTakeResponse.model_validate(db_stock_take)
 
 
+# ============================================================================
+# STOCK TAKE SUMMARY ENDPOINTS (Must be before /{stock_take_id} to avoid route conflicts)
+# ============================================================================
+
+@router.get("/summary", response_model=StockTakeSummaryResponse)
+def get_stock_take_summary(
+    store_name: str = Query(..., description="Store name to get summary for"),
+    start_date: Optional[datetime] = Query(None, description="Filter by start date (created_at from open_stock)"),
+    end_date: Optional[datetime] = Query(None, description="Filter by end date (created_at from close_stock)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get a linked stock take summary for a specific store.
+
+    This endpoint links open_stock and close_stock entries by store_name.
+    - **store_name**: Name of the store (required)
+    - **start_date**: Filter entries with created_at >= start_date (optional)
+    - **end_date**: Filter entries with created_at <= end_date (optional)
+
+    Returns:
+    - **store_name**: The queried store name
+    - **start_date**: Earliest created_at from open_stock entries for this store
+    - **end_date**: Latest created_at from close_stock entries for this store
+    - **open_stock_entries**: All open stock entries for this store
+    - **close_stock_entries**: All close stock entries for this store
+    """
+    summary = StockTakeSummaryRepository.get_summary_by_store(
+        db, store_name, start_date, end_date
+    )
+    return StockTakeSummaryResponse(**summary)
+
+
+@router.get("/summary/stores", response_model=List[str])
+def get_stores_with_stock(
+    db: Session = Depends(get_db)
+):
+    """
+    Get a list of all stores that have open or close stock entries.
+
+    Returns a sorted list of unique store names.
+    """
+    return StockTakeSummaryRepository.get_all_stores_with_stock(db)
+
+
 @router.get("/{stock_take_id}", response_model=StockTakeResponse)
 def get_stock_take(
     stock_take_id: int,
@@ -199,50 +243,6 @@ def complete_stock_take(
             detail=f"Stock take with ID {stock_take_id} not found"
         )
     return StockTakeResponse.model_validate(db_stock_take)
-
-
-# ============================================================================
-# STOCK TAKE SUMMARY ENDPOINTS (Linking open_stock and close_stock)
-# ============================================================================
-
-@router.get("/summary", response_model=StockTakeSummaryResponse)
-def get_stock_take_summary(
-    store_name: str = Query(..., description="Store name to get summary for"),
-    start_date: Optional[datetime] = Query(None, description="Filter by start date (created_at from open_stock)"),
-    end_date: Optional[datetime] = Query(None, description="Filter by end date (created_at from close_stock)"),
-    db: Session = Depends(get_db)
-):
-    """
-    Get a linked stock take summary for a specific store.
-
-    This endpoint links open_stock and close_stock entries by store_name.
-    - **store_name**: Name of the store (required)
-    - **start_date**: Filter entries with created_at >= start_date (optional)
-    - **end_date**: Filter entries with created_at <= end_date (optional)
-
-    Returns:
-    - **store_name**: The queried store name
-    - **start_date**: Earliest created_at from open_stock entries for this store
-    - **end_date**: Latest created_at from close_stock entries for this store
-    - **open_stock_entries**: All open stock entries for this store
-    - **close_stock_entries**: All close stock entries for this store
-    """
-    summary = StockTakeSummaryRepository.get_summary_by_store(
-        db, store_name, start_date, end_date
-    )
-    return StockTakeSummaryResponse(**summary)
-
-
-@router.get("/summary/stores", response_model=List[str])
-def get_stores_with_stock(
-    db: Session = Depends(get_db)
-):
-    """
-    Get a list of all stores that have open or close stock entries.
-
-    Returns a sorted list of unique store names.
-    """
-    return StockTakeSummaryRepository.get_all_stores_with_stock(db)
 
 
 # ============================================================================
